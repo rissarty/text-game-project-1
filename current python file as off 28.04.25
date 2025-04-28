@@ -1,0 +1,229 @@
+import pygame, asyncio  # Import the Pygame library, which lets us create games with graphics and sound
+import sys  # Import the sys library to interact with the system (exit the game)
+
+# Initialize Pygame
+pygame.init()  # Initializes all the Pygame modules to start using them
+
+# Constants
+FPS = 60  # Frames per second, controls how fast the game updates (like how smooth it looks)
+screen_width = 800  # Width of the game screen
+screen_height = 600  # Height of the game screen
+
+# Set up the display
+screen = pygame.display.set_mode((screen_width, screen_height),
+                                 pygame.RESIZABLE)  # Create the game window, and make it resizable
+pygame.display.set_caption("Adventure Game")  # Set the title of the game window
+
+# Load fonts
+font = pygame.font.Font(None, 48)  # Create a font object to use for text, with a size of 48
+
+
+# Function to display text
+def display_text(text, x, y, color=(255, 255, 255)):
+    """
+    This function displays text on the screen at a specific position (x, y).
+    Args:
+        text (str): The text to display.
+        x (int): X-coordinate for where the text will appear.
+        y (int): Y-coordinate for where the text will appear.
+        color (tuple): The color of the text in RGB format (default is white).
+    Returns:
+        pygame.Rect: The rectangle area of the rendered text (for later checking if clicked).
+    """
+    text_surface = font.render(text, True, color)  # Create the text surface (like an image of text)
+    rect = text_surface.get_rect(
+        topleft=(x, y))  # Get the rectangle around the text to help with positioning and clicking
+    screen.blit(text_surface, rect)  # Draw the text onto the screen at the given position
+    return rect  # Return the rectangle so we can check for clicking on this area later
+
+
+# Function to display centered text
+def display_centered_text(text, y_offset, color=(255, 255, 255)):
+    """
+    This function displays text centered horizontally on the screen.
+    Args:
+        text (str): The text to display.
+        y_offset (int): Y-coordinate for where to position the text vertically.
+        color (tuple): The color of the text in RGB format.
+    """
+    text_surface = font.render(text, True, color)  # Create the text surface
+    text_rect = text_surface.get_rect(center=(screen_width // 2, y_offset))  # Center the text horizontally
+    screen.blit(text_surface, text_rect)  # Draw the text onto the screen
+
+
+# Function to display the player's inventory
+def display_inventory(inventory):
+    """
+    This function shows the items in the player's inventory at the bottom of the screen.
+    Args:
+        inventory (list): List of strings representing items in the player's inventory.
+    """
+    y_offset = 550  # Start at the bottom of the screen
+    display_text("Inventory:", 50, y_offset)  # Display the title "Inventory"
+    y_offset += 30  # Move the Y position down a little bit for the items
+    for item in inventory:  # Loop through all items in the inventory
+        display_text(item, 50, y_offset)  # Display each item in the inventory
+        y_offset += 30  # Move down a little bit for the next item
+
+
+# Game variables
+current_state = "intro"  # This keeps track of what part of the game we're in (the "scene")
+input_text = ""  # Stores the player's input text (e.g., for their name)
+inventory = []  # The player's inventory, which starts empty
+clickable_areas = []  # A list to store areas of the screen that the player can click on (for buttons)
+
+# Transition variables for delayed scene changes
+transition_timer = 0  # Timer for transitions (when we want to delay a scene change)
+pending_state = None  # The next state to go to after the transition
+transition_delay = 1000  # Delay time in milliseconds (1000 ms = 1 second)
+
+
+# Main game loop
+async def main():
+    global current_state, input_text, screen_width, screen_height, screen, inventory, clickable_areas, transition_timer, pending_state
+    clock = pygame.time.Clock()  # This clock helps us control the game's frame rate (how fast the game updates)
+
+    mouse_was_pressed = False  # This variable helps us make sure the player only clicks once per frame
+
+    while True:  # This is the "forever" game loop
+        clickable_areas = []  # Reset the clickable areas every frame (so they're updated)
+
+        # --- Event Loop ---
+        for event in pygame.event.get():  # Check for events (like key presses or mouse clicks)
+            if event.type == pygame.QUIT:  # If the player closes the window
+                pygame.quit()  # Quit Pygame
+                sys.exit()  # Exit the program
+
+            if event.type == pygame.VIDEORESIZE:  # If the player resizes the window
+                screen_width, screen_height = event.w, event.h  # Update the screen size
+                screen = pygame.display.set_mode((screen_width, screen_height),
+                                                 pygame.RESIZABLE)  # Recreate the window with the new size
+
+            if event.type == pygame.KEYDOWN:  # If a key is pressed down
+                if current_state == "intro":  # If we're in the "intro" state
+                    if event.key == pygame.K_RETURN:  # If the player presses Enter
+                        current_state = "first_choice"  # Go to the first choice state
+                    elif event.key == pygame.K_BACKSPACE:  # If the player presses backspace
+                        input_text = input_text[:-1]  # Remove the last character from the input
+                    elif event.key == pygame.K_ESCAPE:  # If the player presses Escape
+                        input_text = ""  # Clear the input
+                    else:
+                        input_text += event.unicode  # Add the typed character to the input
+
+        # --- Drawing ---
+        screen.fill((0, 0, 0))  # Fill the screen with black (clear the screen)
+
+        # Function to draw a button (used for choices the player can click on)
+        def draw_button(text, x, y, color=(255, 255, 255), bg_color=(70, 70, 70), padding=10):
+            text_surface = font.render(text, True, color)  # Create the button text
+            rect = text_surface.get_rect(topleft=(x, y))  # Position the text at (x, y)
+            button_rect = pygame.Rect(rect.x - padding, rect.y - padding, rect.width + 2 * padding,
+                                      rect.height + 2 * padding)  # Create a larger clickable area around the text
+
+            pygame.draw.rect(screen, bg_color, button_rect)  # Draw the button's background
+            screen.blit(text_surface, rect)  # Draw the text on top of the button
+            return button_rect  # Return the rectangle for the button (used to check if the player clicks it)
+
+        # --- Different states of the game (what's currently happening) ---
+        if current_state == "intro":  # If we're in the "intro" state
+            display_centered_text("HELLO", 100)  # Display "HELLO" in the center at Y position 100
+            display_text("Enter your name:", 50, 200)  # Ask the player for their name
+            display_text(input_text, 50, 250)  # Display the current text the player has typed
+
+        elif current_state == "first_choice":  # If we're in the "first choice" state
+            display_text("You wake up in the middle of nowhere...", 50, 200)  # Display the story text
+            display_text("You see a plane crash site nearby.", 50, 230)
+            display_text("You remember you were on a flight.", 50, 260)
+            b1 = draw_button("1. Find someone", 50, 360)  # Draw button for the first choice
+            b2 = draw_button("2. Look for shelter", 50, 420)  # Draw button for the second choice
+            clickable_areas.extend(
+                [(b1, "find_someone"), (b2, "find_shelter")])  # Add these buttons to the list of clickable areas
+        elif current_state == "transition_text":
+            display_centered_text("You start looking for someone...", 300)
+            if pygame.time.get_ticks() - transition_timer > transition_delay:
+                current_state = pending_state
+                pending_state = None
+
+        elif current_state == "your_next_state":
+            display_centered_text("You reach an open field, unsure where to go next.", 300)
+
+        elif current_state in ["find_someone", "find_shelter"]:
+            display_centered_text("You come across an abandoned shack...", 300)
+            display_centered_text("You find a Machete and expired food supplies.", 340)
+            b1 = draw_button("Take Machete", screen_width // 2 - 150, 460)
+            b2 = draw_button("Take Food Supplies", screen_width // 2 - 150, 520)
+            clickable_areas.extend([(b1, "Machete_choice"), (b2, "Food_choice")])
+
+        elif current_state == "Machete_choice":
+            display_centered_text("You acquired: Machete", 400)
+            inventory.append("Machete")
+            current_state = "after_item_choice"
+
+        elif current_state == "Food_choice":
+            display_centered_text("You acquired: Food supplies", 400)
+            inventory.append("Food supplies")
+            current_state = "after_item_choice"
+
+        elif current_state == "after_item_choice":
+            display_centered_text("You take your item and try to find shelter...", 400)
+            current_state = "forest_or_beach1"
+
+        elif current_state == "forest_or_beach1":
+            display_centered_text("You see a forest and a beach as night falls.", 400)
+            b1 = draw_button("Go to Forest", screen_width // 2 - 150, 460)
+            b2 = draw_button("Go to Beach", screen_width // 2 - 150, 520)
+            clickable_areas.extend([(b1, "Forest_arrive"), (b2, "Beach_arrive")])
+
+        elif current_state == "Forest_arrive":
+            display_centered_text("You enter deep into the forest.", 400)
+            current_state = "Boar_fight1"
+
+        elif current_state == "Boar_fight1":
+            display_centered_text("A boar charges at you!", 400)
+            if "Machete" in inventory:
+                b1 = draw_button("Fight with Machete", screen_width // 2 - 150, 460)
+                clickable_areas.append((b1, "Boar_fight_initialisation"))
+            b2 = draw_button("RUN!!", screen_width // 2 - 150, 520)
+            clickable_areas.append((b2, "Run"))
+
+        elif current_state == "Boar_fight_initialisation":
+            display_centered_text("You get ready to fight, picking up your Machete", 400)
+
+        elif current_state == "Run":
+            display_centered_text("You start running and get slightly hurt...", 400)
+
+        elif current_state == "Beach_arrive":
+            display_centered_text("You arrive at the beach and look at the sea.", 400)
+
+        # Draw inventory at the bottom of the screen
+        display_inventory(inventory)
+
+        # --- Mouse Click Detection (AFTER drawing) ---
+        mouse_pressed = pygame.mouse.get_pressed()[0]  # Check if the left mouse button is pressed
+        if mouse_pressed and not mouse_was_pressed:  # If the mouse button is pressed, and it wasn't pressed last frame
+            mouse_pos = pygame.mouse.get_pos()  # Get the mouse position
+            print("🔍 Mouse clicked at:", mouse_pos)  # Print where the player clicked for debugging
+            for rect, state in clickable_areas:  # Check if any clickable areas were clicked
+                if rect.collidepoint(mouse_pos):  # If the player clicked inside this area
+                    print("✅ Clicked on:", state)  # Print which button was clicked
+                    if current_state == "first_choice":
+                        if state == "find_someone":  # If they chose "Find someone"
+                            transition_timer = pygame.time.get_ticks()  # Start a timer for the transition
+                            pending_state = "your_next_state"  # Set the next state to transition to
+                            current_state = "transition_text"  # Go to a state that shows transition text
+                        elif state == "find_shelter":  # If they chose "Find shelter"
+                            current_state = state  # Go to the "find shelter" state
+                    else:
+                        current_state = state  # Go to the selected state
+                    break
+        mouse_was_pressed = mouse_pressed  # Update the mouse press state for next frame
+
+        # --- Update Display ---
+        pygame.display.flip()  # Update the screen to show everything we just drew
+        clock.tick(FPS)  # Control the frame rate (make sure the game runs at the desired FPS)
+        await asyncio.sleep(0)
+
+
+# Start the game loop
+if __name__ == "__main__":
+    asyncio.run(main())  # Run the game
