@@ -1,0 +1,380 @@
+import pygame, asyncio
+import sys
+import random
+import pygbag
+
+# Initialize Pygame
+pygame.init()
+
+# Constants
+FPS = 60
+screen_width = 1080
+screen_height = 700
+fullscreen = False
+touch_detected = False  # Detects if any touchscreen interaction occurred
+
+# Set up the display
+screen = pygame.display.set_mode((screen_width, screen_height), pygame.RESIZABLE)
+pygame.display.set_caption("Adventure Game")
+
+# Load fonts
+font = pygame.font.Font(None, 48)
+
+# Function to display text
+def display_text(text, x, y, color=(255, 255, 255)):
+    text_surface = font.render(text, True, color)
+    rect = text_surface.get_rect(topleft=(x, y))
+    screen.blit(text_surface, rect)
+    return rect
+
+# Function to display centered text
+def display_centered_text(text, y_offset, color=(255, 255, 255)):
+    text_surface = font.render(text, True, color)
+    text_rect = text_surface.get_rect(center=(screen_width // 2, y_offset))
+    screen.blit(text_surface, text_rect)
+
+# Function to display the player's inventory
+def display_inventory(inventory):
+    y_offset = screen_height - 150
+    display_text("Inventory:", 50, y_offset)
+    y_offset += 30
+    for item in inventory:
+        display_text(item, 50, y_offset)
+        y_offset += 125
+
+# Game variables
+current_state = "intro"
+input_text = ""
+inventory = []
+clickable_areas = []
+transition_delay = 1000
+transition_timer = 0
+pending_state = None
+show_keyboard = False
+
+# Enemy Class
+class Enemy:
+    def __init__(self, name, health, min_damage, max_damage):
+        self.name = name
+        self.health = health
+        self.min_damage = min_damage
+        self.max_damage = max_damage
+
+    def attack(self):
+        return random.randint(self.min_damage, self.max_damage)
+
+    def take_damage(self, damage):
+        self.health -= damage
+
+    def is_alive(self):
+        return self.health > 0
+
+# List of Enemies
+enemy_list = [Enemy("Boar", 30, 2, 6)]
+
+# Dynamic Image Scaling
+
+def scale_image(image, width, height):
+    original_width, original_height = image.get_size()
+    aspect_ratio = original_width / original_height
+
+    if width / height > aspect_ratio:
+        new_width = int(height * aspect_ratio)
+        new_height = height
+    else:
+        new_width = width
+        new_height = int(width / aspect_ratio)
+
+    return pygame.transform.scale(image, (new_width, new_height))
+
+# Virtual Keyboard Layout
+keyboard_keys = [
+    list("QWERTYUIOP"),
+    list("ASDFGHJKL"),
+    list("ZXCVBNM")
+]
+
+# Draw Virtual Keyboard
+
+def draw_virtual_keyboard(y_start):
+    key_rects = []
+    key_width = 60
+    padding = 10
+    key_height = 60
+    y_start = screen_height - ((key_height + padding) * 4)
+
+    for row_index, row in enumerate(keyboard_keys):
+        row_length = len(row) * (key_width + padding) - padding
+        x_offset = (screen_width - row_length) // 2
+        y_offset = y_start + row_index * (key_height + padding)
+
+        for char in row:
+            rect = pygame.Rect(x_offset, y_offset, key_width, key_height)
+            pygame.draw.rect(screen, (70, 70, 70), rect, border_radius=6)
+            letter = font.render(char, True, (255, 255, 255))
+            screen.blit(letter, letter.get_rect(center=rect.center))
+            key_rects.append((rect, char))
+            x_offset += key_width + padding
+
+    # Enter and Back buttons
+    enter_rect = pygame.Rect(screen_width // 2 + 70, y_start + 3 * (key_height + padding), 120, key_height)
+    backspace_rect = pygame.Rect(screen_width // 2 - 70 - 120, y_start + 3 * (key_height + padding), 120, key_height)
+
+    for rect, label in [(enter_rect, "Enter"), (backspace_rect, "Back")]:
+        pygame.draw.rect(screen, (70, 70, 70), rect, border_radius=6)
+        label_surf = font.render(label, True, (255, 255, 255))
+        screen.blit(label_surf, label_surf.get_rect(center=rect.center))
+
+    key_rects.append((enter_rect, "ENTER"))
+    key_rects.append((backspace_rect, "BACK"))
+    return key_rects
+
+# Main Game Loop
+async def main():
+    global current_state, input_text, screen_width, screen_height, screen
+    global inventory, clickable_areas, transition_timer, pending_state
+    global current_enemy, player_health, battle_message, show_keyboard
+
+    clock = pygame.time.Clock()
+    mouse_was_pressed = False
+    background_image_original = pygame.image.load("beachtropicalislandimage.png").convert()
+
+    while True:
+        clickable_areas = []
+        keyboard_rects = []
+
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit()
+                sys.exit()
+            elif event.type == pygame.VIDEORESIZE:
+                screen_width, screen_height = event.w, event.h
+                screen = pygame.display.set_mode((screen_width, screen_height), pygame.RESIZABLE)
+            elif event.type == pygame.KEYDOWN:
+                if current_state == "intro" and not show_keyboard:
+                    if event.key == pygame.K_RETURN:
+                        current_state = "first_choice"
+                    elif event.key == pygame.K_BACKSPACE:
+                        input_text = input_text[:-1]
+                    elif event.key == pygame.K_ESCAPE:
+                        input_text = ""
+                    else:
+                        input_text += event.unicode
+            elif event.type == pygame.FINGERDOWN:
+                tx = int(event.x * screen_width)
+                ty = int(event.y * screen_height)
+                show_keyboard = True
+                for rect, state in clickable_areas:
+                    if rect.collidepoint(tx, ty):
+                        if state == "toggle_keyboard":
+                            show_keyboard = not show_keyboard
+                        elif current_state == "first_choice":
+                            transition_timer = pygame.time.get_ticks()
+                            pending_state = state
+                            current_state = "transition_text"
+                        else:
+                            current_state = state
+                for rect, value in keyboard_rects:
+                    if rect.collidepoint(tx, ty):
+                        if value == "ENTER":
+                            current_state = "first_choice"
+                        elif value == "BACK":
+                            input_text = input_text[:-1]
+                        else:
+                            input_text += value
+
+        screen.fill((0, 0, 0))
+        background_image_scaled = scale_image(background_image_original, screen_width, screen_height)
+        screen.blit(background_image_scaled, (0, 0))
+
+        def draw_button(text, y, color=(255, 255, 255), bg_color=(70, 70, 70), padding=10, width=None):
+            text_surface = font.render(text, True, color)
+            if width is None:
+                width = text_surface.get_width() + 2 * padding
+            rect = text_surface.get_rect(center=(screen_width // 2, y))
+            button_rect = pygame.Rect(rect.x - padding, rect.y - padding, width, rect.height + 2 * padding)
+            pygame.draw.rect(screen, bg_color, button_rect)
+            screen.blit(text_surface, rect)
+            return button_rect
+
+        # --- Render States ---
+        if current_state == "intro":
+            display_centered_text("HELLO", 100)
+            display_text("Enter your name:", 50, 200)
+            display_text(input_text, 50, 250)
+            if not show_keyboard:
+                toggle_keyboard_button = draw_button("Toggle Keyboard", 400)
+                clickable_areas.append((toggle_keyboard_button, "toggle_keyboard"))
+            else:
+                keyboard_rects = draw_virtual_keyboard(370)
+        elif current_state == "first_choice":
+            display_text("You wake up in the middle of nowhere...", 50, 200)
+            display_text("You see a plane crash site nearby.", 50, 230)
+            display_text("You remember you were on a flight.", 50, 260)
+            b1 = draw_button("1. Find someone", 360)
+            b2 = draw_button("2. Look for shelter", 420)
+            clickable_areas.extend([(b1, "find_someone"), (b2, "find_shelter")])
+
+        elif current_state == "transition_text":
+            display_centered_text("You start looking for someone...", 300)
+            if pygame.time.get_ticks() - transition_timer > transition_delay:
+                current_state = pending_state
+                pending_state = None
+
+        elif current_state == "your_next_state":
+            display_centered_text("You reach an open field, unsure where to go next.", 300)
+
+        elif current_state in ["find_someone", "find_shelter"]:
+            display_centered_text("You come across an abandoned shack...", 300)
+            display_centered_text("You find a Machete and expired food supplies.", 340)
+            b1 = draw_button("Take Machete", 460)
+            b2 = draw_button("Take Food Supplies", 520)
+            clickable_areas.extend([(b1, "Machete_choice"), (b2, "Food_choice")])
+
+        elif current_state == "Machete_choice":
+            display_centered_text("You acquired: Machete", 400)
+            if "Machete" not in inventory:
+                inventory.append("Machete")
+            b1 = draw_button("Continue", 500)
+            clickable_areas.append((b1, "after_item_choice"))
+
+        elif current_state == "Food_choice":
+            display_centered_text("You acquired: Food supplies", 400)
+            if "Food supplies" not in inventory:
+                inventory.append("Food supplies")
+            b1 = draw_button("Continue", 500)
+            clickable_areas.append((b1, "after_item_choice"))
+
+        elif current_state == "after_item_choice":
+            display_centered_text("You take your item and try to find shelter...", 400)
+            b1 = draw_button("Continue", 500)
+            clickable_areas.append((b1, "forest_or_beach1"))
+
+        elif current_state == "forest_or_beach1":
+            display_centered_text("You see a forest and a beach as night falls.", 400)
+            b1 = draw_button("Go to Forest", 460)
+            b2 = draw_button("Go to Beach", 520)
+            clickable_areas.extend([(b1, "Forest_arrive"), (b2, "Beach_arrive")])
+
+        elif current_state == "Forest_arrive":
+            display_centered_text("You enter deep into the forest.", 400)
+            b1 = draw_button("Continue", 500)
+            clickable_areas.append((b1, "Boar_fight1"))
+
+        elif current_state == "Boar_fight1":
+            display_centered_text("A boar charges at you!", 400)
+            if "Machete" in inventory:
+                b1 = draw_button("Fight with Machete", 460)
+                clickable_areas.append((b1, "Boar_fight_initialisation"))
+            b2 = draw_button("RUN!!", 520)
+            clickable_areas.append((b2, "Run"))
+
+        elif current_state == "Boar_fight_initialisation":
+            display_centered_text("You get ready to fight, picking up your Machete", 400)
+            current_enemy = enemy_list[0]
+            player_health = 20
+            battle_message = ""
+            current_state = "Boar_battle"
+
+        elif current_state == "Boar_battle":
+            display_centered_text(f"Your Health: {player_health}", 100)
+            display_centered_text(f"{current_enemy.name} Health: {current_enemy.health}", 150)
+            if battle_message:
+                display_centered_text(battle_message, 250)
+            b1 = draw_button("Attack", 400)
+            b2 = draw_button("Defend", 460)
+            b3 = draw_button("Run Away", 520)
+            clickable_areas.extend([(b1, "attack"), (b2, "defend"), (b3, "run")])
+        elif current_state == "attack":
+            if current_enemy.is_alive():
+                damage = random.randint(5, 10)  # Player's attack damage
+                current_enemy.take_damage(damage)
+                battle_message = f"You hit the boar for {damage} damage!"
+
+                if not current_enemy.is_alive():
+                    battle_message += " You defeated the boar!"
+                    b1 = draw_button("Continue", 500)
+                    clickable_areas.append((b1, "after_battle"))
+                    current_state = "after_battle"
+                else:
+                    # Boar attacks back
+                    enemy_damage = current_enemy.attack()
+                    player_health -= enemy_damage
+                    battle_message += f" The boar hit you back for {enemy_damage}!"
+
+                    if player_health <= 0:
+                        current_state = "game_over"
+                    else:
+                        current_state = "Boar_battle"
+
+        elif current_state == "defend":
+            enemy_damage = max(0, current_enemy.attack() - 3)
+            player_health -= enemy_damage
+            battle_message = f"You defended! Boar hits you for {enemy_damage}."
+            if player_health <= 0:
+                current_state = "game_over"
+            else:
+                current_state = "Boar_battle"
+
+        elif current_state == "after_battle":
+            display_centered_text("You survived the fight and move on.", 300)
+            b1 = draw_button("Continue", 400)
+            clickable_areas.append((b1, "Beach_arrive"))
+
+        elif current_state == "Run":
+            display_centered_text("You start running and get slightly hurt...", 400)
+
+        elif current_state == "Beach_arrive":
+            display_centered_text("You arrive at the beach and look at the sea.", 250)
+            display_centered_text("You Go Forward And See thr night light falling upon you.", 290)
+            display_centered_text("As the Sea waves crashing on the shore,",330)
+            display_centered_text("You go Ahead and look into the sea, looking at your own reflection", 370)
+            display_centered_text("A strange voice calls onto you...", 410, color=(89, 4, 4))
+            b1 = draw_button("Put Your Hand In...?", 540)
+            b2 = draw_button("Move Away...", 610)
+            clickable_areas.append((b2, "Put"))
+            clickable_areas.append((b1, "Hand in"))
+        elif current_state == "Hand in":
+            display_centered_text("you put your hand in, as something tries to drag u in", 500)
+
+
+
+        elif current_state == "game_over":
+            display_centered_text("Game Over", 300)
+            b1 = draw_button("Restart", 400)
+            clickable_areas.append((b1, "intro"))
+
+
+        # Other game states follow the same structure...
+
+        display_inventory(inventory)
+
+        mouse_pressed = pygame.mouse.get_pressed()[0]
+        if mouse_pressed and not mouse_was_pressed:
+            mouse_pos = pygame.mouse.get_pos()
+            for rect, state in clickable_areas:
+                if rect.collidepoint(mouse_pos):
+                    if state == "toggle_keyboard":
+                        show_keyboard = not show_keyboard
+                    elif current_state == "first_choice":
+                        transition_timer = pygame.time.get_ticks()
+                        pending_state = state
+                        current_state = "transition_text"
+                    else:
+                        current_state = state
+            for rect, value in keyboard_rects:
+                if rect.collidepoint(mouse_pos):
+                    if value == "ENTER":
+                        current_state = "first_choice"
+                    elif value == "BACK":
+                        input_text = input_text[:-1]
+                    else:
+                        input_text += value
+        mouse_was_pressed = mouse_pressed
+
+        pygame.display.flip()
+        clock.tick(FPS)
+        await asyncio.sleep(0)
+
+if __name__ == "__main__":
+    asyncio.run(main())
