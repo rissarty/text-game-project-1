@@ -1,1 +1,3 @@
-this game is a simple text based game made in pygame. it will be expanded in scale later down the road.
+this game is a simple text based game made in pygame. 
+
+this was made as my first project to learn about python, github and other techs. 
